@@ -30,6 +30,7 @@ import {
   Hammer,
   KeyRound,
   LayoutDashboard,
+  Languages,
   Link2,
   MessageCircle,
   FileCode2,
@@ -57,6 +58,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { languageOptions, uiText, type Language, type Route, type Theme } from "@/i18n";
 
 type Status = "ok" | "failed" | "not_implemented" | "not_checked" | string;
 
@@ -419,22 +421,18 @@ type StartupResult = CommandResult<{
   showUpdate: boolean;
 }>;
 
-type Route = "overview" | "relay" | "sessions" | "context" | "enhance" | "userScripts" | "recommendations" | "maintenance" | "about" | "settings";
-type Theme = "dark" | "light";
-
-const routes: Array<{ id: Route; label: string; icon: LucideIcon }> = [
-  { id: "overview", label: "概览", icon: LayoutDashboard },
-  { id: "relay", label: "供应商配置", icon: KeyRound },
-  { id: "sessions", label: "会话管理", icon: MessageCircle },
-  { id: "context", label: "工具与插件", icon: Network },
-  { id: "enhance", label: "页面增强", icon: Hammer },
-  { id: "userScripts", label: "脚本市场", icon: FileCode2 },
-  { id: "recommendations", label: "推荐内容", icon: ExternalLink },
-  { id: "maintenance", label: "安装维护", icon: Wrench },
-  { id: "about", label: "关于", icon: Info },
-  { id: "settings", label: "设置", icon: Settings },
+const routes: Array<{ id: Route; icon: LucideIcon }> = [
+  { id: "overview", icon: LayoutDashboard },
+  { id: "relay", icon: KeyRound },
+  { id: "sessions", icon: MessageCircle },
+  { id: "context", icon: Network },
+  { id: "enhance", icon: Hammer },
+  { id: "userScripts", icon: FileCode2 },
+  { id: "recommendations", icon: ExternalLink },
+  { id: "maintenance", icon: Wrench },
+  { id: "about", icon: Info },
+  { id: "settings", icon: Settings },
 ];
-
 const defaultSettings: BackendSettings = {
   codexAppPath: "",
   codexExtraArgs: [],
@@ -495,6 +493,7 @@ const defaultSettings: BackendSettings = {
 
 export function App() {
   const [theme, setTheme] = useState<Theme>(() => loadInitialTheme());
+  const [language, setLanguage] = useState<Language>(() => loadInitialLanguage());
   const [route, setRoute] = useState<Route>(() => loadInitialRoute());
   const [notice, setNotice] = useState<{ title: string; message: string; status?: Status } | null>(null);
   const [overview, setOverview] = useState<OverviewResult | null>(null);
@@ -523,9 +522,13 @@ export function App() {
   });
   const [removeOwnedData, setRemoveOwnedData] = useState(false);
 
-  const call = <T,>(command: string, args?: Record<string, unknown>) => invoke<T>(command, args);
+  const call = <T,>(command: string, args?: Record<string, unknown>) => {
+    if (!isTauriRuntime()) return Promise.reject(new Error(uiText[language].runtime.backendUnavailable));
+    return invoke<T>(command, args);
+  };
 
   const logDiagnostic = (event: string, detail: Record<string, unknown> = {}) => {
+    if (!isTauriRuntime()) return;
     void invoke("write_diagnostic_event", { event, detail }).catch(() => {});
   };
 
@@ -533,7 +536,7 @@ export function App() {
     try {
       return await task();
     } catch (error) {
-      showNotice("调用失败", stringifyError(error), "failed");
+      showNotice(uiText[language].runtime.callFailed, stringifyError(error), "failed");
       return null;
     }
   };
@@ -1250,6 +1253,7 @@ export function App() {
   };
 
   useEffect(() => {
+    if (!isTauriRuntime()) return;
     void (async () => {
       const startup = await run(() => call<StartupResult>("startup_options"));
       if (startup?.showUpdate) {
@@ -1270,6 +1274,11 @@ export function App() {
     window.localStorage.setItem("codex-plus-theme", theme);
   }, [theme]);
 
+  useEffect(() => {
+    document.documentElement.lang = language === "zh" ? "zh-CN" : language;
+    window.localStorage.setItem("codex-plus-language", language);
+  }, [language]);
+
   const saveCodexAppPath = async (appPath: string) => {
     const next = { ...settingsForm, codexAppPath: appPath };
     const result = await run(() => call<SettingsResult>("save_settings", { settings: next }));
@@ -1285,7 +1294,13 @@ export function App() {
 
   const actions = useMemo(
     () => ({
-      refreshCurrent: () => navigate(route),
+      refreshCurrent: async () => {
+        if (!isTauriRuntime()) {
+          window.location.reload();
+          return;
+        }
+        await navigate(route);
+      },
       launch,
       restart,
       repairBackend,
@@ -1393,10 +1408,12 @@ export function App() {
       enableWatcher: () => watcherAction("enable_watcher"),
       disableWatcher: () => watcherAction("disable_watcher"),
       toggleTheme: () => setTheme((current) => (current === "dark" ? "light" : "dark")),
+      setLanguage,
     }),
-    [route, launchForm, settingsForm, settings, removeOwnedData, update, logs, diagnostics, theme, relayFiles, localSessions],
+    [route, launchForm, settingsForm, settings, removeOwnedData, update, logs, diagnostics, theme, language, relayFiles, localSessions],
   );
   const hasUpdate = update?.updateAvailable === true;
+  const text = uiText[language];
 
   return (
     <div className={`shell ${theme}`}>
@@ -1420,24 +1437,25 @@ export function App() {
                 </button>
               ) : null}
             </div>
-            <div className="brand-subtitle">管理控制台</div>
+            <div className="brand-subtitle">{text.brandSubtitle}</div>
           </div>
         </div>
         <nav className="nav">
           {routes.map((item) => {
             const Icon = item.icon;
+            const label = routeTitle(item.id, language);
             return (
             <button
               className={`nav-item ${route === item.id ? "active" : ""}`}
               key={item.id}
               onClick={() => void navigate(item.id)}
-              title={item.label}
+              title={label}
               type="button"
             >
               <span className="nav-icon">
                 <Icon className="h-4 w-4" aria-hidden="true" />
               </span>
-              <span className="nav-label">{item.label}</span>
+              <span className="nav-label">{label}</span>
             </button>
           );
           })}
@@ -1446,23 +1464,37 @@ export function App() {
       <main className="workspace">
         <header className="topbar" key={`topbar-${route}`}>
           <div>
-            <h1>{routeTitle(route)}</h1>
-            <p>{routeSubtitle(route)}</p>
+            <h1>{routeTitle(route, language)}</h1>
+            <p>{routeSubtitle(route, language)}</p>
           </div>
           <div className="topbar-actions">
+            <label className="language-toggle" title={text.topbar.language}>
+              <Languages className="h-4 w-4" aria-hidden="true" />
+              <select
+                aria-label={text.topbar.language}
+                value={language}
+                onChange={(event) => actions.setLanguage(event.currentTarget.value as Language)}
+              >
+                {languageOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.shortLabel}
+                  </option>
+                ))}
+              </select>
+            </label>
             <Button
               onClick={actions.toggleTheme}
               size="icon"
-              title={theme === "dark" ? "切换到浅色" : "切换到深色"}
+              title={theme === "dark" ? text.topbar.switchToLight : text.topbar.switchToDark}
               variant="outline"
             >
               {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </Button>
-            <Button onClick={() => void actions.restart()} title="重启 Codex++" variant="outline">
+            <Button onClick={() => void actions.restart()} title={text.topbar.restart} variant="outline">
               <Rocket className="h-4 w-4" />
-              重启 Codex++
+              {text.topbar.restart}
             </Button>
-            <Button onClick={() => void actions.refreshCurrent()} size="icon" title="刷新当前页面" variant="outline">
+            <Button onClick={() => void actions.refreshCurrent()} size="icon" title={text.topbar.refresh} variant="outline">
               <RefreshCw className="h-4 w-4" />
             </Button>
           </div>
@@ -1471,6 +1503,7 @@ export function App() {
           {route === "overview" ? (
             <OverviewScreen
               overview={overview}
+              language={language}
               actions={actions}
             />
           ) : null}
@@ -1521,7 +1554,7 @@ export function App() {
           ) : null}
           {route === "about" ? <AboutScreen overview={overview} update={update} logs={logs} diagnostics={diagnostics} actions={actions} /> : null}
           {route === "settings" ? (
-            <SettingsScreen settings={settings} theme={theme} form={settingsForm} onFormChange={setSettingsForm} actions={actions} />
+            <SettingsScreen settings={settings} theme={theme} language={language} form={settingsForm} onFormChange={setSettingsForm} actions={actions} />
           ) : null}
         </section>
       </main>
@@ -1596,30 +1629,34 @@ type Actions = {
   enableWatcher: () => Promise<void>;
   disableWatcher: () => Promise<void>;
   toggleTheme: () => void;
+  setLanguage: (language: Language) => void;
   checkHealth: () => Promise<void>;
 };
 
 function OverviewScreen({
   overview,
+  language,
   actions,
 }: {
   overview: OverviewResult | null;
+  language: Language;
   actions: Actions;
 }) {
-  const health = healthItems(overview);
+  const text = uiText[language].overview;
+  const health = healthItems(overview, text);
   return (
     <>
       <Panel>
-        <CardHead title="健康检查" detail="概览只展示关键问题，具体配置在对应页面处理" />
+        <CardHead title={text.healthTitle} detail={text.healthDetail} />
         <CardContent>
           <div className="health-grid">
             <div className={`health-item ${overview?.codex_version ? "ok" : "needs-fix"}`}>
               {overview?.codex_version ? <CheckCircle2 className="h-4 w-4" /> : <Bell className="h-4 w-4" />}
               <div>
-                <strong>Codex 版本</strong>
-                <span>{overview?.codex_version ?? "未检测到 Codex 应用版本。"}</span>
+                <strong>{text.codexVersion}</strong>
+                <span>{overview?.codex_version ?? text.codexVersionMissing}</span>
               </div>
-              <Badge status={overview?.codex_version ? "ok" : "not_checked"} />
+              <Badge status={overview?.codex_version ? "ok" : "not_checked"} language={language} />
             </div>
             {health.map((item) => (
               <div className={`health-item ${item.ok ? "ok" : "needs-fix"}`} key={item.title}>
@@ -1628,36 +1665,36 @@ function OverviewScreen({
                   <strong>{item.title}</strong>
                   <span>{item.detail}</span>
                 </div>
-                <Badge status={item.status} />
+                <Badge status={item.status} language={language} />
               </div>
             ))}
           </div>
           <Toolbar>
             <Button onClick={() => void actions.checkHealth()}>
               <RefreshCw className="h-4 w-4" />
-              检查
+              {text.check}
             </Button>
             <Button variant="secondary" onClick={() => void actions.repairShortcuts()}>
               <Wrench className="h-4 w-4" />
-              修复入口
+              {text.repairEntrypoints}
             </Button>
             <Button variant="secondary" onClick={() => void actions.repairBackend()}>
-              修复后端
+              {text.repairBackend}
             </Button>
           </Toolbar>
         </CardContent>
       </Panel>
       <Panel>
-        <CardHead title="最近启动" detail={overview?.logs_path ?? "暂无状态文件"} />
+        <CardHead title={text.latestLaunch} detail={overview?.logs_path ?? text.noStatusFile} />
         <CardContent>
-          <LatestLaunch status={overview?.latest_launch ?? null} />
+          <LatestLaunch status={overview?.latest_launch ?? null} language={language} />
           <Toolbar>
             <Button onClick={() => void actions.launch()}>
               <Rocket className="h-4 w-4" />
-              启动 Codex++
+              {text.launchCodex}
             </Button>
             <Button variant="secondary" onClick={() => void actions.goLogs()}>
-              打开关于
+              {text.openAbout}
             </Button>
           </Toolbar>
         </CardContent>
@@ -2250,33 +2287,36 @@ function AboutScreen({
 function SettingsScreen({
   settings,
   theme,
+  language,
   form,
   onFormChange,
   actions,
 }: {
   settings: SettingsResult | null;
   theme: Theme;
+  language: Language;
   form: BackendSettings;
   onFormChange: (value: BackendSettings) => void;
   actions: Actions;
 }) {
+  const text = uiText[language].settings;
   return (
     <>
       <Panel>
-        <CardHead title="基础设置" detail={settings?.settings_path ?? ""} />
+        <CardHead title={text.basicTitle} detail={settings?.settings_path ?? ""} />
         <CardContent>
           <div className="theme-row">
             <div>
-              <strong>界面主题</strong>
-              <span>当前为{theme === "dark" ? "深色" : "浅色"}模式。</span>
+              <strong>{text.themeTitle}</strong>
+              <span>{text.themeCurrent(theme)}</span>
             </div>
-            <Button variant="secondary" onClick={actions.toggleTheme}>切换主题</Button>
+            <Button variant="secondary" onClick={actions.toggleTheme}>{text.switchTheme}</Button>
           </div>
-          <Field label="供应商测试模型">
+          <Field label={text.relayTestModel}>
             <Input
               value={form.relayTestModel}
               onChange={(event) => onFormChange({ ...form, relayTestModel: event.currentTarget.value })}
-              placeholder="例如 gpt-5.4-mini"
+              placeholder={text.relayTestModelPlaceholder}
             />
           </Field>
           <label className="check-row">
@@ -2285,23 +2325,23 @@ function SettingsScreen({
               onChange={(event) => onFormChange({ ...form, cliWrapperEnabled: event.currentTarget.checked })}
               type="checkbox"
             />
-            <span>启用 Codex 命令包装器</span>
+            <span>{text.enableCliWrapper}</span>
           </label>
           <div className="form-row">
-            <Field label="包装器 Base URL">
+            <Field label={text.wrapperBaseUrl}>
               <Input
                 value={form.cliWrapperBaseUrl}
                 onChange={(event) => onFormChange({ ...form, cliWrapperBaseUrl: event.currentTarget.value })}
               />
             </Field>
-            <Field label="API Key 环境变量">
+            <Field label={text.apiKeyEnv}>
               <Input
                 value={form.cliWrapperApiKeyEnv}
                 onChange={(event) => onFormChange({ ...form, cliWrapperApiKeyEnv: event.currentTarget.value })}
               />
             </Field>
           </div>
-          <Field label="API Key">
+          <Field label={text.apiKey}>
             <Input
               type="password"
               value={form.cliWrapperApiKey}
@@ -2309,17 +2349,17 @@ function SettingsScreen({
             />
           </Field>
           <Toolbar>
-            <Button onClick={() => void actions.saveSettings()}>保存设置</Button>
+            <Button onClick={() => void actions.saveSettings()}>{text.saveSettings}</Button>
             <Button variant="secondary" onClick={() => void actions.resetSettings()}>
-              重置设置
+              {text.resetSettings}
             </Button>
           </Toolbar>
         </CardContent>
       </Panel>
       <Panel>
-        <CardHead title="Codex 启动参数" detail="启动 Codex App 时追加到默认 CDP 参数后。留空则保持默认启动行为。" />
+        <CardHead title={text.launchArgsTitle} detail={text.launchArgsDetail} />
         <CardContent>
-          <Field label="额外参数">
+          <Field label={text.extraArgs}>
             <Textarea
               className="launch-args-input"
               placeholder="--force_high_performance_gpu"
@@ -2333,9 +2373,9 @@ function SettingsScreen({
               }
             />
           </Field>
-          <p className="field-hint">每行一个参数，例如 --force_high_performance_gpu。不需要填写 open 或 --args。</p>
+          <p className="field-hint">{text.extraArgsHint}</p>
           <Toolbar>
-            <Button onClick={() => void actions.saveSettings()}>保存设置</Button>
+            <Button onClick={() => void actions.saveSettings()}>{text.saveSettings}</Button>
           </Toolbar>
         </CardContent>
       </Panel>
@@ -3413,19 +3453,20 @@ function StatusRow({ title, status = "unknown", path }: { title: string; status?
   );
 }
 
-function Badge({ status }: { status: string }) {
-  return <UiBadge className={statusClass(status)} variant="secondary">{statusLabel(status)}</UiBadge>;
+function Badge({ status, language = "zh" }: { status: string; language?: Language }) {
+  return <UiBadge className={statusClass(status)} variant="secondary">{statusLabel(status, language)}</UiBadge>;
 }
 
-function LatestLaunch({ status }: { status: LaunchStatus | null }) {
-  if (!status) return <div className="empty">暂无启动状态。</div>;
+function LatestLaunch({ status, language }: { status: LaunchStatus | null; language: Language }) {
+  const text = uiText[language].overview;
+  if (!status) return <div className="empty">{text.noLaunchStatus}</div>;
   return (
     <div className="metric-list">
-      <Metric label="状态" value={status.status} />
-      <Metric label="消息" value={status.message} />
+      <Metric label={text.status} value={statusLabel(status.status, language)} />
+      <Metric label={text.message} value={status.message} />
       <Metric label="Debug" value={String(status.debug_port ?? "-")} />
       <Metric label="Helper" value={String(status.helper_port ?? "-")} />
-      <Metric label="时间" value={formatTime(status.started_at_ms)} />
+      <Metric label={text.time} value={formatTime(status.started_at_ms, language)} />
     </div>
   );
 }
@@ -3497,24 +3538,12 @@ function isExpiredAd(ad: AdItem) {
   return Number.isFinite(expiresAt) && expiresAt < Date.now();
 }
 
-function routeTitle(route: Route) {
-  return routes.find((item) => item.id === route)?.label ?? "概览";
+function routeTitle(route: Route, language: Language) {
+  return uiText[language].routeLabels[route] ?? uiText.zh.routeLabels.overview;
 }
 
-function routeSubtitle(route: Route) {
-  const subtitles: Record<Route, string> = {
-    overview: "检查问题、启动与快速修复",
-    relay: "管理 API 供应商、协议、Key 与配置文件",
-    sessions: "查看、删除和修复 Codex 本地会话",
-    context: "独立管理 MCP、Skills、Plugins",
-    enhance: "会话删除、导出、项目移动和脚本能力",
-    userScripts: "内置和用户自定义脚本清单",
-    recommendations: "赞助商推荐与普通推荐",
-    maintenance: "入口安装、修复、Watcher 与手动启动",
-    about: "版本信息、项目链接、GitHub Release 更新、日志与诊断",
-    settings: "主题、命令包装器和启动参数",
-  };
-  return subtitles[route];
+function routeSubtitle(route: Route, language: Language) {
+  return uiText[language].routeSubtitles[route];
 }
 
 const contextKindOptions: Array<{ kind: ContextKind; label: string; tableName: string }> = [
@@ -4133,22 +4162,8 @@ function providerInitial(name: string) {
   return Array.from(trimmed)[0]?.toUpperCase() || "供";
 }
 
-function statusLabel(status: string) {
-  const labels: Record<string, string> = {
-    found: "已找到",
-    missing: "缺失",
-    installed: "已安装",
-    ok: "正常",
-    running: "运行中",
-    failed: "失败",
-    archived: "已归档",
-    accepted: "已受理",
-    not_checked: "未检查",
-    not_implemented: "未实现",
-    disabled: "已禁用",
-    unknown: "未知",
-  };
-  return labels[status] ?? status;
+function statusLabel(status: string, language: Language = "zh") {
+  return uiText[language].overview.statuses[status] ?? status;
 }
 
 function statusClass(status: string) {
@@ -4161,25 +4176,25 @@ function isSuccessStatus(status?: Status) {
   return status === "ok" || status === "accepted";
 }
 
-function healthItems(overview: OverviewResult | null) {
+function healthItems(overview: OverviewResult | null, text: typeof uiText.zh.overview) {
   return [
     {
-      title: "Codex 应用",
+      title: text.codexApp,
       status: overview?.codex_app.status ?? "not_checked",
       ok: overview?.codex_app.status === "found",
-      detail: overview?.codex_app.path || "尚未检查 Codex 应用路径。",
+      detail: overview?.codex_app.path || text.codexAppMissing,
     },
     {
-      title: "静默启动入口",
+      title: text.silentShortcut,
       status: overview?.silent_shortcut.status ?? "not_checked",
       ok: overview?.silent_shortcut.status === "installed",
-      detail: overview?.silent_shortcut.path || "缺少 Codex++ 静默启动快捷方式时可在安装维护页修复。",
+      detail: overview?.silent_shortcut.path || text.silentShortcutMissing,
     },
     {
-      title: "管理工具入口",
+      title: text.managementShortcut,
       status: overview?.management_shortcut.status ?? "not_checked",
       ok: overview?.management_shortcut.status === "installed",
-      detail: overview?.management_shortcut.path || "缺少管理工具快捷方式时可在安装维护页修复。",
+      detail: overview?.management_shortcut.path || text.managementShortcutMissing,
     },
   ];
 }
@@ -4866,9 +4881,10 @@ function splitLogLines(text: string) {
   return text.trimEnd().split(/\r?\n/).filter((line, index, lines) => line.length > 0 || index < lines.length - 1);
 }
 
-function formatTime(value: number) {
+function formatTime(value: number, language: Language = "zh") {
   if (!value) return "-";
-  return new Date(value).toLocaleString("zh-CN");
+  const locale = language === "zh" ? "zh-CN" : language === "vi" ? "vi-VN" : "en-US";
+  return new Date(value).toLocaleString(locale);
 }
 
 function stringifyError(error: unknown) {
@@ -4879,6 +4895,17 @@ function stringifyError(error: unknown) {
 function loadInitialTheme(): Theme {
   if (typeof window === "undefined") return "dark";
   return window.localStorage.getItem("codex-plus-theme") === "light" ? "light" : "dark";
+}
+
+function loadInitialLanguage(): Language {
+  if (typeof window === "undefined") return "zh";
+  const stored = window.localStorage.getItem("codex-plus-language");
+  return stored === "en" || stored === "vi" || stored === "zh" ? stored : "zh";
+}
+
+function isTauriRuntime() {
+  if (typeof window === "undefined") return false;
+  return "__TAURI_INTERNALS__" in window || "__TAURI__" in window;
 }
 
 function loadInitialRoute(): Route {
